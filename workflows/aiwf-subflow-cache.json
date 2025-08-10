@@ -1,0 +1,276 @@
+{
+  "name": "AIWF v12 — Cache Subflow",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "JavaScript",
+        "jsCode": "/* Input contract (from parent):\n  {\n    op: 'get' | 'set' | 'del',\n    cacheKey: string,\n    // for set only:\n    value?: any,           // object/string; will be JSON.stringified\n    ttlSec?: number        // optional; defaults to $env.CACHE_TTL_SEC\n  }\n*/\nconst b = $json || {};\nconst op = (b.op || 'get').toLowerCase();\nconst cacheKey = String(b.cacheKey || '').trim();\nif (!cacheKey) {\n  return [{ error: true, reason: 'MISSING_CACHE_KEY' }];\n}\nlet ttl = Number(b.ttlSec || $env.CACHE_TTL_SEC || 1800);\nif (!Number.isFinite(ttl) || ttl <= 0) ttl = 1800;\nlet value = b.value;\ntry {\n  if (value !== undefined && typeof value !== 'string') value = JSON.stringify(value);\n} catch (e) {\n  value = String(value);\n}\nreturn [{ op, cacheKey, ttl, value }];"
+      },
+      "id": "C0",
+      "name": "Normalize & Validate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -680,
+        20
+      ]
+    },
+    {
+      "parameters": {
+        "propertyName": "op",
+        "dataType": "string",
+        "rules": {
+          "values": [
+            {
+              "operation": "equal",
+              "value": "get"
+            },
+            {
+              "operation": "equal",
+              "value": "set"
+            },
+            {
+              "operation": "equal",
+              "value": "del"
+            }
+          ]
+        }
+      },
+      "id": "S1",
+      "name": "Switch op",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 2,
+      "position": [
+        -440,
+        20
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{$env.REDIS_BASE_URL}}/GET",
+        "options": {
+          "timeout": "={{$env.HTTP_TIMEOUT_MS||25000}}",
+          "retryOnFail": true,
+          "maxRetries": "={{$env.HTTP_MAX_RETRIES||1}}"
+        },
+        "queryParametersUi": {
+          "parameter": [
+            {
+              "name": "key",
+              "value": "={{$json.cacheKey}}"
+            }
+          ]
+        }
+      },
+      "id": "H_GET",
+      "name": "Redis GET",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        -160,
+        -140
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "redis-rest-headers",
+          "name": "Redis REST Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "JavaScript",
+        "jsCode": "const raw = $json.data ?? $json.value ?? $json.result ?? null;\nconst hit = typeof raw === 'string' && raw.trim().length > 0;\nreturn [{ hit, payload: hit ? raw : undefined }];"
+      },
+      "id": "C_GET_SHAPE",
+      "name": "Shape GET Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        60,
+        -140
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{$env.REDIS_BASE_URL}}/SETEX",
+        "options": {
+          "timeout": "={{$env.HTTP_TIMEOUT_MS||25000}}",
+          "retryOnFail": true,
+          "maxRetries": "={{$env.HTTP_MAX_RETRIES||1}}"
+        },
+        "queryParametersUi": {
+          "parameter": [
+            {
+              "name": "key",
+              "value": "={{$json.cacheKey}}"
+            },
+            {
+              "name": "seconds",
+              "value": "={{$json.ttl}}"
+            },
+            {
+              "name": "value",
+              "value": "={{$json.value || ''}}"
+            }
+          ]
+        }
+      },
+      "id": "H_SET",
+      "name": "Redis SETEX",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        -160,
+        20
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "redis-rest-headers",
+          "name": "Redis REST Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "JavaScript",
+        "jsCode": "return [{ ok: true }];"
+      },
+      "id": "C_SET_SHAPE",
+      "name": "Shape SET Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        60,
+        20
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{$env.REDIS_BASE_URL}}/DEL",
+        "options": {
+          "timeout": "={{$env.HTTP_TIMEOUT_MS||25000}}",
+          "retryOnFail": true,
+          "maxRetries": "={{$env.HTTP_MAX_RETRIES||1}}"
+        },
+        "queryParametersUi": {
+          "parameter": [
+            {
+              "name": "key",
+              "value": "={{$json.cacheKey}}"
+            }
+          ]
+        }
+      },
+      "id": "H_DEL",
+      "name": "Redis DEL",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        -160,
+        180
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "redis-rest-headers",
+          "name": "Redis REST Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "JavaScript",
+        "jsCode": "return [{ ok: true, deleted: 1 }];"
+      },
+      "id": "C_DEL_SHAPE",
+      "name": "Shape DEL Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        60,
+        180
+      ]
+    }
+  ],
+  "connections": {
+    "Normalize & Validate": {
+      "main": [
+        [
+          {
+            "node": "Switch op",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch op": {
+      "main": [
+        [
+          {
+            "node": "Redis GET",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Redis SETEX",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Redis DEL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Redis GET": {
+      "main": [
+        [
+          {
+            "node": "Shape GET Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Redis SETEX": {
+      "main": [
+        [
+          {
+            "node": "Shape SET Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Redis DEL": {
+      "main": [
+        [
+          {
+            "node": "Shape DEL Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all"
+  },
+  "version": 2
+}
