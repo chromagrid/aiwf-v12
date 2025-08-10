@@ -1,0 +1,210 @@
+{
+  "name": "AIWF v12 — Validator",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "JavaScript",
+        "jsCode": "/* Input contract (from parent):\n  - LLM raw output in one of:\n      data | body | result | response  (OpenRouter style or plain JSON)\n  - Optional: schema (JSON-schema-ish object) to override default\n  - Optional clamps via env:\n      MAX_ANSWER_LEN (default 4000), MAX_CITATIONS (default 10)\n*/\nconst DEFAULT_SCHEMA = { type: 'object', properties: { answer: { type: 'string' }, citations: { type: 'array', items: { type: 'string' } } }, required: ['answer'] };\nconst raw = $json.data ?? $json.body ?? $json.result ?? $json.response ?? null;\nconst schema = $json.schema && typeof $json.schema === 'object' ? $json.schema : DEFAULT_SCHEMA;\nreturn [{ raw, schema }];"
+      },
+      "id": "V0",
+      "name": "Normalize Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -560,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "JavaScript",
+        "jsCode": "function safeParse(s){ try { return JSON.parse(s); } catch(e){ return undefined; } }\nfunction extractObj(raw){\n  if (!raw) return undefined;\n  // If raw is already an object with answer\n  if (typeof raw === 'object') {\n    if (typeof raw.answer === 'string') return raw;\n    // OpenRouter shape embedded object?\n    const c = raw.choices?.[0]?.message?.content;\n    if (typeof c === 'string') {\n      const inner = safeParse(c); if (inner && typeof inner.answer === 'string') return inner;\n    }\n    if (typeof raw.content === 'string') { const inner = safeParse(raw.content); if (inner && typeof inner.answer === 'string') return inner; }\n    return undefined;\n  }\n  // If raw is a string\n  if (typeof raw === 'string') {\n    // Try parse as OpenRouter envelope first\n    const env = safeParse(raw);\n    if (env) {\n      if (typeof env.answer === 'string') return env;\n      const c = env.choices?.[0]?.message?.content;\n      if (typeof c === 'string') { const inner = safeParse(c); if (inner && typeof inner.answer === 'string') return inner; }\n      if (typeof env.content === 'string') { const inner = safeParse(env.content); if (inner && typeof inner.answer === 'string') return inner; }\n    }\n    // Fallback: maybe the string is the JSON object itself\n    const obj = safeParse(raw); if (obj && typeof obj.answer === 'string') return obj;\n  }\n  return undefined;\n}\nfunction validateAgainstSchema(obj, schema){\n  if (!obj || typeof obj !== 'object') return false;\n  // Minimal schema check tailored for {answer: string, citations?: string[]}\n  if (!('answer' in obj) || typeof obj.answer !== 'string') return false;\n  if ('citations' in obj && !Array.isArray(obj.citations)) return false;\n  if (Array.isArray(obj.citations)) {\n    for (const c of obj.citations) if (typeof c !== 'string') return false;\n  }\n  return true;\n}\nconst obj = extractObj($json.raw);\nconst valid = validateAgainstSchema(obj, $json.schema);\nreturn [{ obj, valid, schema: $json.schema }];"
+      },
+      "id": "V1",
+      "name": "Validate Shape",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -320,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "propertyName": "valid",
+        "dataType": "boolean",
+        "output": 0,
+        "rules": {
+          "values": [
+            {
+              "operation": "equal",
+              "value": true
+            }
+          ]
+        }
+      },
+      "id": "S1",
+      "name": "Valid?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 2,
+      "position": [
+        -120,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "options": {
+          "timeout": "={{$env.HTTP_TIMEOUT_MS||25000}}",
+          "retryOnFail": true,
+          "maxRetries": "={{$env.HTTP_MAX_RETRIES||1}}"
+        },
+        "jsonParameters": true,
+        "bodyParametersJson": "={\n  \"model\": \"{{$env.CHEAP_MODEL}}\",\n  \"temperature\": 0.1,\n  \"max_tokens\": {{$env.MAX_TOKENS_SHORT||384}},\n  \"response_format\": {\"type\":\"json_object\"},\n  \"messages\": [\n    {\"role\":\"system\",\"content\":\"You are a STRICT JSON reformatter. Output ONLY valid JSON that matches the SCHEMA exactly. No code fences. No explanations.\"},\n    {\"role\":\"user\",\"content\":\"SCHEMA as JSON:\\n\" + {{JSON.stringify($json.schema)}}},\n    {\"role\":\"user\",\"content\":\"BAD_JSON to fix:\\n\" + {{ typeof $json.raw === 'string' ? $json.raw : JSON.stringify($json.raw||{}) }}}\n  ]\n}"
+      },
+      "id": "H1",
+      "name": "Fixup (cheap, only if invalid)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        -120,
+        220
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "openrouter-headers",
+          "name": "OpenRouter Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "JavaScript",
+        "jsCode": "function safeParse(s){ try { return JSON.parse(s); } catch(e){ return undefined; } }\nlet fixed = undefined;\ntry {\n  const r = JSON.parse($json.data || $json.body || '{}');\n  const s = r.choices?.[0]?.message?.content;\n  if (typeof s === 'string') fixed = safeParse(s);\n} catch(e) {}\nreturn [{ obj: fixed, valid: Boolean(fixed && typeof fixed.answer === 'string') }];"
+      },
+      "id": "V2",
+      "name": "Parse Fixup Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        120,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "JavaScript",
+        "jsCode": "const MAX_ANSWER = Number($env.MAX_ANSWER_LEN || 4000);\nconst MAX_CIT = Number($env.MAX_CITATIONS || 10);\nconst obj = $json.obj || {};\nif (typeof obj.answer === 'string') obj.answer = obj.answer.slice(0, MAX_ANSWER);\nif (Array.isArray(obj.citations)) obj.citations = obj.citations.filter(x => typeof x === 'string').slice(0, MAX_CIT);\nreturn [{ obj }];"
+      },
+      "id": "V3",
+      "name": "Clamp & Sanity",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        120,
+        20
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "JavaScript",
+        "jsCode": "// Wrap into an OpenRouter-like envelope so upstream nodes can parse the same way.\n// { choices: [ { message: { content: JSON.stringify(obj) } } ] }\nconst env = { choices: [ { message: { content: JSON.stringify($json.obj || {}) } } ] };\nreturn [{ data: JSON.stringify(env) }];"
+      },
+      "id": "V4",
+      "name": "Wrap → OpenRouter Envelope",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        360,
+        20
+      ]
+    }
+  ],
+  "connections": {
+    "Normalize Input": {
+      "main": [
+        [
+          {
+            "node": "Validate Shape",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Shape": {
+      "main": [
+        [
+          {
+            "node": "Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid?": {
+      "main": [
+        [
+          {
+            "node": "Clamp & Sanity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fixup (cheap, only if invalid)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fixup (cheap, only if invalid)": {
+      "main": [
+        [
+          {
+            "node": "Parse Fixup Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Fixup Result": {
+      "main": [
+        [
+          {
+            "node": "Clamp & Sanity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clamp & Sanity": {
+      "main": [
+        [
+          {
+            "node": "Wrap → OpenRouter Envelope",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all"
+  },
+  "version": 2
+}
