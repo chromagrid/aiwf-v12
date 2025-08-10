@@ -1,0 +1,223 @@
+{
+  "name": "AIWF v12 — Finalize Subflow",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "JavaScript",
+        "jsCode": "/* Input contract (from parent):\n  {\n    // Either a strict object OR an OpenRouter-like envelope:\n    //   { answer, citations? }  OR  { choices:[{message:{content: JSON-string}}] }\n    data?: any,\n    body?: any,\n    result?: any,\n    response?: any,\n\n    // Optional cache fields\n    cacheKey?: string,\n    ttlSec?: number,\n\n    // Telemetry (pass-through)\n    model?: string,\n    tier?: 'cheap'|'standard'|'premium',\n    kept?: number\n  }\n*/\nfunction safeParse(s){ try { return JSON.parse(s); } catch(e){ return undefined; } }\nfunction extract(raw){\n  if (!raw) return undefined;\n  if (typeof raw === 'object'){\n    if (typeof raw.answer === 'string') return raw;\n    const c = raw.choices?.[0]?.message?.content;\n    if (typeof c === 'string'){ const inner = safeParse(c); if (inner && typeof inner.answer==='string') return inner; }\n    if (typeof raw.content === 'string'){ const inner = safeParse(raw.content); if (inner && typeof inner.answer==='string') return inner; }\n    return undefined;\n  }\n  if (typeof raw === 'string'){\n    const env = safeParse(raw);\n    if (env){\n      if (typeof env.answer === 'string') return env;\n      const c = env.choices?.[0]?.message?.content;\n      if (typeof c === 'string'){ const inner = safeParse(c); if (inner && typeof inner.answer==='string') return inner; }\n      if (typeof env.content === 'string'){ const inner = safeParse(env.content); if (inner && typeof inner.answer==='string') return inner; }\n    }\n    const obj = safeParse(raw); if (obj && typeof obj.answer==='string') return obj;\n  }\n  return undefined;\n}\nconst raw = $json.data ?? $json.body ?? $json.result ?? $json.response ?? null;\nconst obj = extract(raw) || { answer: '' };\nconst cacheKey = String($json.cacheKey || '').trim();\nlet ttl = Number($json.ttlSec || $env.CACHE_TTL_SEC || 1800);\nif (!Number.isFinite(ttl) || ttl <= 0) ttl = 1800;\nreturn [{ obj, cacheKey, ttl, model: $json.model, tier: $json.tier, kept: $json.kept }];"
+      },
+      "id": "F0",
+      "name": "Normalize Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -660,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "JavaScript",
+        "jsCode": "const MAX_ANSWER = Number($env.MAX_ANSWER_LEN || 4000);\nconst MAX_CIT = Number($env.MAX_CITATIONS || 10);\nconst o = $json.obj || {};\nif (typeof o.answer !== 'string') o.answer = String(o.answer ?? '');\no.answer = o.answer.slice(0, MAX_ANSWER);\nif (!Array.isArray(o.citations)) o.citations = [];\no.citations = o.citations.filter(x => typeof x === 'string').slice(0, MAX_CIT);\n// Optional cheap sanity: drop obvious garbage\no.citations = Array.from(new Set(o.citations.map(s => s.trim()).filter(Boolean)));\nreturn [{\n  response: {\n    answer: o.answer,\n    citations: o.citations,\n    model: $json.model,\n    tier: $json.tier,\n    cache_hit: false\n  },\n  cacheKey: $json.cacheKey,\n  ttl: $json.ttl,\n  kept: $json.kept\n}];"
+      },
+      "id": "F1",
+      "name": "Clamp & Sanity",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -420,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "propertyName": "cacheKey",
+        "dataType": "string",
+        "output": 0,
+        "rules": {
+          "values": [
+            {
+              "operation": "isEmpty"
+            }
+          ]
+        }
+      },
+      "id": "S1",
+      "name": "Has cacheKey?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 2,
+      "position": [
+        -180,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "JavaScript",
+        "jsCode": "return [ { cached: false } ];"
+      },
+      "id": "F2",
+      "name": "Skip Cache (no key)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        40,
+        -120
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{$env.REDIS_BASE_URL}}/SETEX",
+        "options": {
+          "timeout": "={{$env.HTTP_TIMEOUT_MS||25000}}",
+          "retryOnFail": true,
+          "maxRetries": "={{$env.HTTP_MAX_RETRIES||1}}"
+        },
+        "queryParametersUi": {
+          "parameter": [
+            {
+              "name": "key",
+              "value": "={{$json.cacheKey}}"
+            },
+            {
+              "name": "seconds",
+              "value": "={{$json.ttl}}"
+            },
+            {
+              "name": "value",
+              "value": "={{JSON.stringify($json.response)}}"
+            }
+          ]
+        }
+      },
+      "id": "H1",
+      "name": "Cache SET (Redis)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        40,
+        80
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "redis-rest-headers",
+          "name": "Redis REST Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "JavaScript",
+        "jsCode": "return [ { cached: true } ];"
+      },
+      "id": "F3",
+      "name": "Mark Cached",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "JavaScript",
+        "jsCode": "const resp = $json.response || {}; if ($json.cached) resp.cache_hit = false; return [{ response: resp, kept: $json.kept }];"
+      },
+      "id": "F4",
+      "name": "Finalize Output Shape",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        -20
+      ]
+    }
+  ],
+  "connections": {
+    "Normalize Input": {
+      "main": [
+        [
+          {
+            "node": "Clamp & Sanity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clamp & Sanity": {
+      "main": [
+        [
+          {
+            "node": "Has cacheKey?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has cacheKey?": {
+      "main": [
+        [
+          {
+            "node": "Skip Cache (no key)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Cache SET (Redis)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Skip Cache (no key)": {
+      "main": [
+        [
+          {
+            "node": "Finalize Output Shape",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cache SET (Redis)": {
+      "main": [
+        [
+          {
+            "node": "Mark Cached",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Cached": {
+      "main": [
+        [
+          {
+            "node": "Finalize Output Shape",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all"
+  },
+  "version": 2
+}
