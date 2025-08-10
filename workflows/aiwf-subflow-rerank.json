@@ -1,0 +1,27 @@
+{
+  "name": "AIWF v12 — Rerank Subflow",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "JavaScript",
+        "jsCode": "/* Input contract (from parent):\\n{\\n  q: string,                   // query text\\n  candidates: [                 // array of candidate chunks\\n    { id: string, text: string, source?: string, url?: string }\\n  ],\\n  topN?: number                 // optional override; default: $env.RERANK_TOP or 8\\n}\\nOutput contract:\\n{\\n  context: [ { id, text, source?, url?, _score } ],\\n  kept: number,\\n  dropped_duplicate: number,\\n  dropped_lowscore: number\\n}\\nNotes:\\n- Local TF cosine scoring (fast).\\n- Semantic dedupe: drop near-duplicates (same id OR Jaccard>0.9).\\n- One-per-source preference when possible.\\n*/\\n\\nconst b = $json || {};\\nconst q = (b.q || '').toString();\\nlet items = Array.isArray(b.candidates) ? b.candidates.slice() : [];\\nconst TOP = Number(b.topN || $env.RERANK_TOP || 8);\\n\\nfunction tf(text){\\n  const m = Object.create(null);\\n  const toks = (text || '').toLowerCase().match(/\\\\b[\\\\w-]{3,}\\\\b/g) || [];\\n  for (const t of toks) m[t] = (m[t]||0)+1;\\n  return m;\\n}\\nfunction cos(a,b){\\n  let dot=0, na=0, nb=0;\\n  for (const k in a){ const av=a[k]||0, bv=b[k]||0; dot += av*bv; na += av*av; }\\n  for (const k in b){ const bv=b[k]||0; nb += bv*bv; }\\n  return dot / ((Math.sqrt(na)*Math.sqrt(nb)) || 1);\\n}\\nfunction jaccard(a,b){\\n  const A = new Set((a||'').toLowerCase().match(/\\\\b[\\\\w-]{3,}\\\\b/g)||[]);\\n  const B = new Set((b||'').toLowerCase().match(/\\\\b[\\\\w-]{3,}\\\\b/g)||[]);\\n  let inter=0; for (const x of A) if (B.has(x)) inter++;\\n  const uni = A.size + B.size - inter;\\n  return uni ? inter/uni : 0;\\n}\\n\\nconst qv = tf(q);\\n// Score\\nitems = items.map(x => ({\\n  id: String(x.id || ''),\\n  text: String(x.text || ''),\\n  source: x.source || x.url || undefined,\\n  url: x.url,\\n  _score: cos(qv, tf(x.text || ''))\\n}));\\n// Sort by score desc\\nitems.sort((a,b)=> b._score - a._score);\\n\\n// Semantic dedupe: same id OR high Jaccard\\nconst kept = [];\\nconst seenIds = new Set();\\nconst DUP_TH = 0.90;\\nlet droppedDup = 0;\\nfor (const it of items){\\n  if (!it.text) continue;\\n  if (it.id && seenIds.has(it.id)){ droppedDup++; continue; }\\n  let dup = false;\\n  for (const k of kept){\\n    if (it.id && k.id && it.id === k.id){ dup = true; break; }\\n    if (jaccard(it.text, k.text) > DUP_TH){ dup = true; break; }\\n  }\\n  if (dup){ droppedDup++; continue; }\\n  kept.push(it);\\n  if (it.id) seenIds.add(it.id);\\n  if (kept.length >= TOP) break;\\n}\\n\\n// One-per-source preference pass (light): if over-represented source and we have room, nothing to do; if not enough diversity, it's fine.\\n\\nconst out = {\\n  context: kept,\\n  kept: kept.length,\\n  dropped_duplicate: droppedDup,\\n  dropped_lowscore: Math.max(items.length - kept.length - droppedDup, 0)\\n};\\nreturn [ out ];"
+      },
+      "id": "C1",
+      "name": "Rerank & Dedupe (local)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -40,
+        0
+      ]
+    }
+  ],
+  "connections": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all"
+  },
+  "version": 2
+}
