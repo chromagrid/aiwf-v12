@@ -37,6 +37,7 @@ aiwf-v12/
 │   ├── redis.credentials.json
 ├── docs/
 │   ├── architecture.md
+│   ├── setup.md
 ├── .env.example
 └── README.md
 
