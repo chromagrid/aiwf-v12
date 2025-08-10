@@ -1,0 +1,864 @@
+{
+  "name": "AIWF v12 (Main)",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "aiwf/v12",
+        "responseMode": "onReceived"
+      },
+      "id": "W1",
+      "name": "Webhook POST",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        -660,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "OPTIONS",
+        "path": "aiwf/v12",
+        "responseMode": "lastNode"
+      },
+      "id": "W2",
+      "name": "Webhook OPTIONS",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        -660,
+        -220
+      ]
+    },
+    {
+      "parameters": {
+        "options": {
+          "responseCode": 204,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Access-Control-Allow-Origin",
+                "value": "={{$env.CORS_ORIGIN||'*'}}"
+              },
+              {
+                "name": "Access-Control-Allow-Headers",
+                "value": "Content-Type, Authorization"
+              },
+              {
+                "name": "Access-Control-Allow-Methods",
+                "value": "POST, OPTIONS"
+              },
+              {
+                "name": "Access-Control-Max-Age",
+                "value": "={{$env.CORS_MAX_AGE||600}}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "R1",
+      "name": "Respond CORS",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        -380,
+        -220
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "JavaScript",
+        "jsCode": "const b=$json||{};const norm=s=>(s||'').toString().replace(/\\s+/g,' ').trim();return [{ path:norm(b.path||'default'), q:norm(b.q||b.query||''), locale:(b.locale||'en').toLowerCase(), policyVersion:b.policyVersion||'v1', catalogIds:Array.isArray(b.catalogIds)?b.catalogIds:[], allowWeb:Boolean(b.allowWeb||false)}];"
+      },
+      "id": "C1",
+      "name": "Normalize",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "JavaScript",
+        "jsCode": "const crypto=require('crypto');const stable={path:$json.path,q:($json.q||'').toLowerCase(),locale:$json.locale,catalog:($json.catalogIds||[]).slice().sort(),policy:$json.policyVersion};const key=`${$env.REDIS_RESP_NS||'aiwf:v12:resp:'}`+crypto.createHash('sha256').update(JSON.stringify(stable)).digest('hex');return [{cacheKey:key}];"
+      },
+      "id": "C2",
+      "name": "CacheKey",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{$env.REDIS_BASE_URL}}/GET",
+        "options": {
+          "timeout": "={{$env.HTTP_TIMEOUT_MS||25000}}",
+          "retryOnFail": true,
+          "maxRetries": "={{$env.HTTP_MAX_RETRIES||1}}"
+        },
+        "queryParametersUi": {
+          "parameter": [
+            {
+              "name": "key",
+              "value": "={{$json.cacheKey}}"
+            }
+          ]
+        }
+      },
+      "name": "Redis GET (Cache)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        -20,
+        0
+      ],
+      "id": "H1",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "redis-rest-headers",
+          "name": "Redis REST Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "JavaScript",
+        "jsCode": "const r=$json.data||$json.value||$json.result||null;if(r&&typeof r==='string'&&r.trim().length){return [{hit:true,payload:r}]};return [{hit:false}];"
+      },
+      "id": "C3",
+      "name": "Cache Hit?",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        200,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "name": "Access-Control-Allow-Origin",
+                "value": "={{$env.CORS_ORIGIN||'*'}}"
+              }
+            ]
+          },
+          "responseData": "={{$json.payload}}"
+        }
+      },
+      "id": "R2",
+      "name": "Respond Cached",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        420,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "JavaScript",
+        "jsCode": "const q=($json.q||'');if(q.length===0){return [{error:true,status:400,body:{error:'EMPTY_QUERY'}}];}if(q.length>8000){return [{error:true,status:413,body:{error:'TOO_LARGE'}}];}return [{error:false}];"
+      },
+      "id": "C4",
+      "name": "Validate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        420,
+        90
+      ]
+    },
+    {
+      "parameters": {
+        "options": {
+          "responseCode": "={{$json.status||400}}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "responseData": "={{JSON.stringify($json.body)}}"
+        }
+      },
+      "id": "R3",
+      "name": "Respond Guard Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        640,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "JavaScript",
+        "jsCode": "return [{allowed:true}];"
+      },
+      "id": "C5",
+      "name": "RateLimit (stub)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        640,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "JavaScript",
+        "jsCode": "const q=($json.q||'').replace(/\\s+/g,' ').trim();const len=q.length;const risk=/refund|legal|medical|pricing|policy|deadline/i.test(q);let tier='cheap';if(len>900||risk)tier='standard';if(risk&&len>1600)tier='premium';if(tier==='premium'&&(Number($env.PREMIUM_BLOCK)||0)===1)tier='standard';const picks={cheap:{model:$env.CHEAP_MODEL||'openrouter/llama-3.1-8b-instruct',max_tokens:Number($env.MAX_TOKENS_SHORT||384),temperature:0.2},standard:{model:$env.STD_MODEL||'openrouter/llama-3.1-70b-instruct',max_tokens:Number($env.MAX_TOKENS_STD||768),temperature:0.3},premium:{model:$env.PREM_MODEL||'openrouter/gpt-4.1',max_tokens:Number($env.MAX_TOKENS_LONG||1024),temperature:0.3}};return [{tier,...picks[tier],reason:{len,risk}}];"
+      },
+      "id": "C6",
+      "name": "Router",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        860,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{$env.REDIS_BASE_URL}}/HGETALL",
+        "options": {
+          "timeout": "={{$env.HTTP_TIMEOUT_MS||25000}}",
+          "retryOnFail": true,
+          "maxRetries": "={{$env.HTTP_MAX_RETRIES||1}}"
+        },
+        "queryParametersUi": {
+          "parameter": [
+            {
+              "name": "key",
+              "value": "={{`${$env.REDIS_BANDIT_NS||'aiwf:v12:bandit:'}${$json.tier||'cheap'}`}}"
+            }
+          ]
+        }
+      },
+      "id": "H2",
+      "name": "Bandit Read (tier stats)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1080,
+        40
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "redis-rest-headers",
+          "name": "Redis REST Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "JavaScript",
+        "jsCode": "return [[$json]];"
+      },
+      "id": "C7",
+      "name": "Bandit Nudge (light)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1300,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{$env.REDIS_BASE_URL}}/GET",
+        "options": {
+          "timeout": "={{$env.HTTP_TIMEOUT_MS||25000}}",
+          "retryOnFail": true,
+          "maxRetries": "={{$env.HTTP_MAX_RETRIES||1}}"
+        },
+        "queryParametersUi": {
+          "parameter": [
+            {
+              "name": "key",
+              "value": "={{`${$env.REDIS_RATE_NS||'aiwf:v12:rate:'}${$json.path}:daily_cost_usd`}}"
+            }
+          ]
+        }
+      },
+      "id": "H3",
+      "name": "Cost Read",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1520,
+        40
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "redis-rest-headers",
+          "name": "Redis REST Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "JavaScript",
+        "jsCode": "const cost=Number($json.value||0);if(cost>=Number($env.COST_CAP_DAILY_USD||999)){return [{downgraded:true,tier:'cheap',model:$env.CHEAP_MODEL,max_tokens:Number($env.MAX_TOKENS_SHORT||384),temperature:0.2}]};return [items()];"
+      },
+      "id": "C8",
+      "name": "Cost Guard",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1740,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{$env.REDIS_BASE_URL}}/GET",
+        "options": {
+          "timeout": "={{$env.HTTP_TIMEOUT_MS||25000}}",
+          "retryOnFail": true,
+          "maxRetries": "={{$env.HTTP_MAX_RETRIES||1}}"
+        },
+        "queryParametersUi": {
+          "parameter": [
+            {
+              "name": "key",
+              "value": "={{`${$env.REDIS_KEY_PREFIX||'aiwf:v12'}:catalog:${$json.locale}:${$json.path}`}}"
+            }
+          ]
+        }
+      },
+      "id": "H4",
+      "name": "Catalog Fetch",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1960,
+        40
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "redis-rest-headers",
+          "name": "Redis REST Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "JavaScript",
+        "jsCode": "function tf(t){const m={};for(const w of (t||'').toLowerCase().match(/\\b[\\w-]{3,}\\b/g)||[])m[w]=(m[w]||0)+1;return m}function cos(a,b){let d=0,na=0,nb=0;for(const k in a){d+=(a[k]||0)*(b[k]||0);na+=a[k]*a[k]}for(const k in b){nb+=b[k]*b[k]}return d/(Math.sqrt(na)*Math.sqrt(nb)||1)}const qv=tf($json.q||'');let items=[];try{items=JSON.parse($json.value||$json.data||'[]')}catch(e){items=[]}items=items.map(x=>({...x,_score:cos(qv,tf(x.text||''))})).sort((a,b)=>b._score-a._score);const seen=new Set();const unique=[];for(const it of items){if(seen.has(it.id))continue;seen.add(it.id);unique.push(it);if(unique.length>=Number($env.RERANK_TOP||8))break}return [{context:unique,kept:unique.length}]"
+      },
+      "id": "C9",
+      "name": "Rerank & Dedupe (local)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2180,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "JavaScript",
+        "jsCode": "const len=($json.q||'').length;let budget=Number($env.MAX_TOKENS_STD||768);if(len<200||($json.kept||0)<=3)budget=Number($env.MAX_TOKENS_SHORT||384);if(($json.tier||'')==='premium')budget=Number($env.MAX_TOKENS_LONG||1024);return [{contextBudget:budget}];"
+      },
+      "id": "C10",
+      "name": "Adaptive Context Budget",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2400,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "options": {
+          "timeout": "={{$env.HTTP_TIMEOUT_MS||25000}}",
+          "retryOnFail": true,
+          "maxRetries": "={{$env.HTTP_MAX_RETRIES||1}}"
+        },
+        "jsonParameters": true,
+        "bodyParametersJson": "={\n  \"model\": \"{{$json.tier==='cheap' ? $json.model : $env.CHEAP_MODEL}}\",\n  \"temperature\": 0.2,\n  \"max_tokens\": {{$env.MAX_TOKENS_SHORT||384}},\n  \"messages\": [\n    {\"role\":\"system\",\"content\":\"You create a minimal bullet plan and a list of required facts. Output JSON: {\\\\\\\"steps\\\\\\\":[string],\\\\\\\"needed\\\\\\\":[string]} ONLY.\"},\n    {\"role\":\"user\",\"content\":{{$json.q}}}\n  ]\n}"
+      },
+      "id": "H5",
+      "name": "LLM Plan (cheap)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        2620,
+        40
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "openrouter-headers",
+          "name": "OpenRouter Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "JavaScript",
+        "jsCode": "let plan={steps:[],needed:[]};try{const r=JSON.parse($json.data||$json.body||'{}');const s=r.choices?.[0]?.message?.content;plan=typeof s==='string'?JSON.parse(s):plan}catch(e){}const context=($json.context||[]).map(x=>x.text).join('\\n\\n');return [{plan,context}];"
+      },
+      "id": "C11",
+      "name": "Parse Plan",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2840,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "options": {
+          "timeout": "={{$env.HTTP_TIMEOUT_MS||25000}}",
+          "retryOnFail": true,
+          "maxRetries": "={{$env.HTTP_MAX_RETRIES||1}}"
+        },
+        "jsonParameters": true,
+        "bodyParametersJson": "={\n  \"model\": \"{{$json.model}}\",\n  \"temperature\": {{$json.temperature||0.3}},\n  \"max_tokens\": {{$json.max_tokens||($env.MAX_TOKENS_STD||768)}},\n  \"response_format\": {\"type\":\"json_object\"},\n  \"messages\": [\n    {\"role\":\"system\",\"content\":\"You are precise. Output STRICT JSON matching the provided schema. No preamble, no commentary.\"},\n    {\"role\":\"user\",\"content\":\"SCHEMA:\\n{\\\\\\\"type\\\\\\\":\\\\\\\"object\\\\\\\",\\\\\\\"properties\\\\\\\":{\\\\\\\"answer\\\\\\\":{\\\\\\\"type\\\\\\\":\\\\\\\"string\\\\\\\"},\\\\\\\"citations\\\\\\\":{\\\\\\\"type\\\\\\\":\\\\\\\"array\\\\\\\",\\\\\\\"items\\\\\\\":{\\\\\\\"type\\\\\\\":\\\\\\\"string\\\\\\\"}}},\\\\\\\"required\\\\\\\":[\\\\\\\"answer\\\\\\\"]}\"},\n    {\"role\":\"user\",\"content\":\"QUESTION:\\n\" + {{$json.q}} },\n    {\"role\":\"user\",\"content\":\"CONTEXT (truncate to budget):\\n\" + {{$json.context}} }\n  ]\n}"
+      },
+      "id": "H6",
+      "name": "LLM Solve (std/prem)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        3060,
+        40
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "openrouter-headers",
+          "name": "OpenRouter Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "workflowId": "={{$json.subflow_validator_id||''}}",
+        "options": {}
+      },
+      "id": "X1",
+      "name": "Validator (subflow)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [
+        3280,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "JavaScript",
+        "jsCode": "let obj={};try{const r=JSON.parse($json.data||$json.body||'{}');const s=r.choices?.[0]?.message?.content;obj=typeof s==='string'?JSON.parse(s):(s||{})}catch(e){}const answer=(obj.answer||'').slice(0,4000);const citations=Array.isArray(obj.citations)?obj.citations.slice(0,10):[];const resp={answer,citations,model:$json.model,tier:$json.tier,cache_hit:false};return [{response:resp}];"
+      },
+      "id": "C12",
+      "name": "Finalize",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3500,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{$env.REDIS_BASE_URL}}/SETEX",
+        "options": {
+          "timeout": "={{$env.HTTP_TIMEOUT_MS||25000}}",
+          "retryOnFail": true,
+          "maxRetries": "={{$env.HTTP_MAX_RETRIES||1}}"
+        },
+        "queryParametersUi": {
+          "parameter": [
+            {
+              "name": "key",
+              "value": "={{$json.cacheKey}}"
+            },
+            {
+              "name": "seconds",
+              "value": "={{$env.CACHE_TTL_SEC||1800}}"
+            },
+            {
+              "name": "value",
+              "value": "={{JSON.stringify($json.response)}}"
+            }
+          ]
+        }
+      },
+      "id": "H7",
+      "name": "Cache SET",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        3720,
+        40
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "redis-rest-headers",
+          "name": "Redis REST Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "workflowId": "={{$json.subflow_metrics_id||''}}"
+      },
+      "id": "X2",
+      "name": "Metrics (subflow)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [
+        3940,
+        -60
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": "={{$json.subflow_bandit_id||''}}"
+      },
+      "id": "X3",
+      "name": "Bandit Update (subflow)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [
+        3940,
+        140
+      ]
+    },
+    {
+      "parameters": {
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "name": "Access-Control-Allow-Origin",
+                "value": "={{$env.CORS_ORIGIN||'*'}}"
+              }
+            ]
+          },
+          "responseData": "={{JSON.stringify($json.response)}}"
+        }
+      },
+      "id": "R4",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        4160,
+        40
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook OPTIONS": {
+      "main": [
+        [
+          {
+            "node": "Respond CORS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook POST": {
+      "main": [
+        [
+          {
+            "node": "Normalize",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize": {
+      "main": [
+        [
+          {
+            "node": "CacheKey",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CacheKey": {
+      "main": [
+        [
+          {
+            "node": "Redis GET (Cache)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Redis GET (Cache)": {
+      "main": [
+        [
+          {
+            "node": "Cache Hit?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cache Hit?": {
+      "main": [
+        [
+          {
+            "node": "Respond Cached",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Validate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate": {
+      "main": [
+        [
+          {
+            "node": "RateLimit (stub)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Guard Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "RateLimit (stub)": {
+      "main": [
+        [
+          {
+            "node": "Router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Router": {
+      "main": [
+        [
+          {
+            "node": "Bandit Read (tier stats)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Bandit Read (tier stats)": {
+      "main": [
+        [
+          {
+            "node": "Bandit Nudge (light)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Bandit Nudge (light)": {
+      "main": [
+        [
+          {
+            "node": "Cost Read",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cost Read": {
+      "main": [
+        [
+          {
+            "node": "Cost Guard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cost Guard": {
+      "main": [
+        [
+          {
+            "node": "Catalog Fetch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Catalog Fetch": {
+      "main": [
+        [
+          {
+            "node": "Rerank & Dedupe (local)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rerank & Dedupe (local)": {
+      "main": [
+        [
+          {
+            "node": "Adaptive Context Budget",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Adaptive Context Budget": {
+      "main": [
+        [
+          {
+            "node": "LLM Plan (cheap)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM Plan (cheap)": {
+      "main": [
+        [
+          {
+            "node": "Parse Plan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Plan": {
+      "main": [
+        [
+          {
+            "node": "LLM Solve (std/prem)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM Solve (std/prem)": {
+      "main": [
+        [
+          {
+            "node": "Validator (subflow)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validator (subflow)": {
+      "main": [
+        [
+          {
+            "node": "Finalize",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Finalize": {
+      "main": [
+        [
+          {
+            "node": "Cache SET",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cache SET": {
+      "main": [
+        [
+          {
+            "node": "Metrics (subflow)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Bandit Update (subflow)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all"
+  },
+  "version": 2
+}
