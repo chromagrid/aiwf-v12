@@ -196,6 +196,3 @@ MIT License — free to use, modify, and distribute.
 2. Create a branch (`feature/my-change`)
 3. Commit changes
 4. Push and open a PR
-
-```
-```
